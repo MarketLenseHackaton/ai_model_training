@@ -4,7 +4,7 @@ import sys
 import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "pipeline"))
-from cluster import assign_market_types  # noqa: E402
+from cluster import NOT_ENOUGH_DATA, assign_market_types  # noqa: E402
 
 
 def _two_groups():
@@ -38,3 +38,23 @@ def test_missing_values_do_not_crash():
     df.loc[0, "demand"] = None
     out, _ = assign_market_types(df)
     assert out["market_type"].notna().all()
+
+
+def test_whole_column_missing_is_skipped_not_crash():
+    # this is what happened when the OSM file was missing: crc_index all empty
+    df = _two_groups()
+    df["crc_index"] = None
+    out, report = assign_market_types(df)
+    assert "crc_index" in report["features_skipped"]
+    assert out["market_type"].notna().all()
+    north = set(out[out["state"].str.startswith("N")]["market_type"])
+    assert north == {"High need, price-squeezed"}
+
+
+def test_no_data_at_all_gives_one_honest_group():
+    df = _two_groups()
+    for f in ["protein_deficiency", "crc_index", "meat_cost", "demand"]:
+        df[f] = None
+    out, report = assign_market_types(df)
+    assert set(out["market_type"]) == {NOT_ENOUGH_DATA}
+    assert report["k"] == 1
