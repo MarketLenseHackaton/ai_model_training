@@ -1,13 +1,14 @@
 """
 MarketLens AI module.
 Same function names and return shapes as the Project Spec, Section 5.
-Real so far: health_score, total_score, status, suggest_capacity, rank.
-Still stub: equity_overview, discover_plan.
-Placeholders inside rank: confidence, score low/high, explanation.
+Real so far: health_score, total_score, status, suggest_capacity, rank,
+             confidence + score range (simulate).
+Still stub: equity_overview, discover_plan. Placeholder: explanation text.
 """
 
 from .scoring import health_score, total_score, status, suggest_capacity
 from .ranking import rank
+from .simulate import simulate
 
 
 def equity_overview(places):
@@ -19,6 +20,6 @@ def discover_plan(place, lens):
 
 
 __all__ = [
-    "rank", "health_score", "total_score", "status",
+    "rank", "health_score", "total_score", "status", "simulate",
     "suggest_capacity", "equity_overview", "discover_plan",
 ]

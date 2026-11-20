@@ -4,14 +4,16 @@ ranking.py — turns all places into the ranked result the API returns.
 rank(places, weights, lens, fair_share) -> {"ranked", "full", "equity", "meta"}
 
 Steps:
-1. score every place          (scoring.total_score)
-2. split off full places      (scoring.status == "full")
-3. sort open places           (highest total first; ties -> rural first)
-4. fair-share (optional)      (at least 2 rural places in the top 5)
-5. equity check               (how many rural places are in the top 5)
+1. split off full places      (scoring.status == "full")
+2. score every open place     (scoring.total_score)
+3. confidence + score range   (simulate.simulate, 1,000 runs)
+4. sort                       (highest total; ties -> higher confidence, then rural)
+5. fair-share (optional)      (at least 2 rural places in the top 5)
+6. equity check               (how many rural places are in the top 5)
 """
 
 from .scoring import health_score, total_score, status
+from .simulate import simulate
 
 TOP_N = 5
 RURAL_TARGET = 2
@@ -27,12 +29,12 @@ def _placeholder_explanation(place: dict) -> dict:
         "demand": "Explanation coming soon.",
         "health": "Explanation coming soon.",
         "affordability": "Explanation coming soon.",
-        "uncertain": "Confidence not calculated yet.",
+        "uncertain": "See confidence and score range.",
         "test_first": "Run a small trial before stocking.",
     }
 
 
-def _build_item(place: dict, total: int, lens: str) -> dict:
+def _build_item(place: dict, total: int, lens: str, sim: dict) -> dict:
     """One entry of 'ranked', in the exact contract shape."""
     capacity = int(place.get("capacity") or 0)
     registered = int(place.get("registered") or 0)
@@ -49,10 +51,10 @@ def _build_item(place: dict, total: int, lens: str) -> dict:
             "health": int(round(health_score(place, lens))),
             "affordability": int(round(float(place.get("meat_cost") or 0))),
             "total": total,
-            "low": total,    # Step 4 (simulation) will replace this
-            "high": total,   # Step 4 (simulation) will replace this
+            "low": min(sim["low"], total),
+            "high": max(sim["high"], total),
         },
-        "confidence": {"pct": 50, "label": "medium"},  # Step 4 replaces this
+        "confidence": {"pct": sim["pct"], "label": sim["label"]},
         "capacity": {
             "registered": registered,
             "capacity": capacity,
@@ -76,11 +78,9 @@ def _apply_fair_share(items: list[dict]) -> list[dict]:
 
     rural_in_top = sum(1 for it in top if it["is_rural"])
     while rural_in_top < RURAL_TARGET:
-        # best rural place below the top 5
         candidate = next((it for it in rest if it["is_rural"]), None)
         if candidate is None:
             break
-        # lowest non-rural place inside the top 5
         out_index = next(
             (i for i in range(len(top) - 1, -1, -1) if not top[i]["is_rural"]),
             None,
@@ -109,7 +109,7 @@ def _equity(items: list[dict]) -> dict:
 
 def rank(places: list[dict], weights: dict, lens: str,
          fair_share: bool = False, n_sims: int = 1000, seed: int = 42) -> dict:
-    open_items = []
+    open_places = []
     full = []
 
     for place in places:
@@ -121,25 +121,33 @@ def rank(places: list[dict], weights: dict, lens: str,
                 "registered": int(place.get("registered") or 0),
                 "capacity": int(place.get("capacity") or 0),
             })
-            continue
-        total = total_score(place, weights, lens)
-        open_items.append(_build_item(place, total, lens))
+        else:
+            open_places.append(place)
 
-    # highest total first; on a tie, rural first; then by name for stability
-    open_items.sort(key=lambda it: (-it["scores"]["total"],
-                                    not it["is_rural"],
-                                    it["name"]))
+    # validates weights + lens and gives the exact total for each place
+    totals = {p["id"]: total_score(p, weights, lens) for p in open_places}
+
+    sims = simulate(open_places, weights, lens, n_sims=n_sims, seed=seed)
+
+    items = [_build_item(p, totals[p["id"]], lens, sims[p["id"]])
+             for p in open_places]
+
+    # highest total; tie -> higher confidence, then rural, then name
+    items.sort(key=lambda it: (-it["scores"]["total"],
+                               -it["confidence"]["pct"],
+                               not it["is_rural"],
+                               it["name"]))
 
     if fair_share:
-        open_items = _apply_fair_share(open_items)
+        items = _apply_fair_share(items)
 
-    for position, item in enumerate(open_items, start=1):
+    for position, item in enumerate(items, start=1):
         item["rank"] = position
 
     return {
-        "ranked": open_items,
+        "ranked": items,
         "full": full,
-        "equity": _equity(open_items),
+        "equity": _equity(items),
         "meta": {
             "n_simulations": n_sims,
             "seed": seed,
