@@ -7,13 +7,15 @@ Steps:
 1. split off full places      (scoring.status == "full")
 2. score every open place     (scoring.total_score)
 3. confidence + score range   (simulate.simulate, 1,000 runs)
-4. sort                       (highest total; ties -> higher confidence, then rural)
-5. fair-share (optional)      (at least 2 rural places in the top 5)
-6. equity check               (how many rural places are in the top 5)
+4. explanations               (explain.explain)
+5. sort                       (highest total; ties -> higher confidence, then rural)
+6. fair-share (optional)      (at least 2 rural places in the top 5)
+7. equity check               (how many rural places are in the top 5)
 """
 
 from .scoring import health_score, total_score, status
 from .simulate import simulate
+from .explain import explain
 
 TOP_N = 5
 RURAL_TARGET = 2
@@ -23,21 +25,11 @@ def _is_rural(place: dict) -> bool:
     return place.get("area_type") == "rural"
 
 
-def _placeholder_explanation(place: dict) -> dict:
-    # Replaced by explain.py in Step 5. Shape is final.
-    return {
-        "demand": "Explanation coming soon.",
-        "health": "Explanation coming soon.",
-        "affordability": "Explanation coming soon.",
-        "uncertain": "See confidence and score range.",
-        "test_first": "Run a small trial before stocking.",
-    }
-
-
 def _build_item(place: dict, total: int, lens: str, sim: dict) -> dict:
     """One entry of 'ranked', in the exact contract shape."""
     capacity = int(place.get("capacity") or 0)
     registered = int(place.get("registered") or 0)
+    confidence = {"pct": sim["pct"], "label": sim["label"]}
     return {
         "rank": 0,  # filled in after sorting
         "id": place["id"],
@@ -54,14 +46,14 @@ def _build_item(place: dict, total: int, lens: str, sim: dict) -> dict:
             "low": min(sim["low"], total),
             "high": max(sim["high"], total),
         },
-        "confidence": {"pct": sim["pct"], "label": sim["label"]},
+        "confidence": confidence,
         "capacity": {
             "registered": registered,
             "capacity": capacity,
             "slots_left": max(0, capacity - registered),
             "status": status(place),
         },
-        "explanation": _placeholder_explanation(place),
+        "explanation": explain(place, lens, confidence),
         "labels": {
             "demand": place.get("label_demand", "assumed"),
             "health": place.get("label_health", "assumed"),
