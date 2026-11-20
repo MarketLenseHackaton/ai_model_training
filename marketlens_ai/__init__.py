@@ -1,8 +1,11 @@
 """
-MarketLens AI module — STUB.
+MarketLens AI module.
 Same function names and return shapes as the Project Spec, Section 5.
-Each function will be replaced with the real logic step by step.
+Real so far: health_score, total_score, status, suggest_capacity.
+Still stub: rank, equity_overview, discover_plan.
 """
+
+from .scoring import health_score, total_score, status, suggest_capacity
 
 EXAMPLE_RANK = {
     "ranked": [
@@ -45,21 +48,15 @@ def rank(places, weights, lens, fair_share=False, n_sims=1000, seed=42):
     return EXAMPLE_RANK
 
 
-def health_score(place, lens):
-    return place.get("protein_deficiency", 0)
-
-
-def status(place):
-    return "full" if place["registered"] >= place["capacity"] else "open"
-
-
-def suggest_capacity(place):
-    return place["capacity"]
-
-
 def equity_overview(places):
     return {"score": 50, "by_area": []}
 
 
 def discover_plan(place, lens):
     return {"message": "Good protein for every pot.", "activities": []}
+
+
+__all__ = [
+    "rank", "health_score", "total_score", "status",
+    "suggest_capacity", "equity_overview", "discover_plan",
+]
