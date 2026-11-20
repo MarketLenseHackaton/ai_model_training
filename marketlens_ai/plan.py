@@ -7,7 +7,7 @@ equity_overview(places) -> {"score", "by_area": [...]}
 discover_plan(place, lens) -> awareness plan for one place.
 """
 
-from .scoring import health_score
+from .scoring import health_score, _num
 
 AREAS = ("big_city", "city", "rural")
 
@@ -61,15 +61,6 @@ DEFAULT_ACTIVITIES = ["market_tasting", "vendor_partner", "recipe_cards"]
 COUNT_BY_GAP = {"high": 3, "medium": 2, "low": 1}
 
 
-def _num(value):
-    if value is None or value == "":
-        return None
-    try:
-        return float(value)
-    except (TypeError, ValueError):
-        return None
-
-
 def equity_overview(places: list[dict]) -> dict:
     """Where businesses are vs where the health need is, by area type."""
     businesses = {a: 0.0 for a in AREAS}
@@ -79,7 +70,7 @@ def equity_overview(places: list[dict]) -> dict:
         area = p.get("area_type")
         if area not in AREAS:
             continue
-        businesses[area] += float(p.get("registered") or 0)
+        businesses[area] += _num(p.get("registered")) or 0.0
         population = _num(p.get("population")) or 0.0
         need[area] += population * health_score(p, "both") / 100
 
@@ -106,7 +97,6 @@ def _message(place: dict, lens: str) -> str:
         return MESSAGES["cancer"]
     if lens == "protein":
         return MESSAGES["protein"]
-    # both: lead with the stronger need we actually have data for
     protein = _num(place.get("protein_deficiency"))
     cancer = _num(place.get("crc_index"))
     if cancer is not None and (protein is None or cancer > protein):

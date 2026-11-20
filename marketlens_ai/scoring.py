@@ -10,7 +10,7 @@ suggest_capacity -> how many businesses this place can hold
 VALID_LENSES = ("protein", "cancer", "both")
 VALID_WEIGHTS = (1, 2, 3)          # Low, Medium, High
 NEARLY_FULL_AT = 0.8               # 80% of slots used
-PEOPLE_PER_SLOT = 400_000          # our stated assumption, tune later
+PEOPLE_PER_SLOT = 1_500_000        # our stated assumption: 1 alt-protein business per 1.5M people at full need
 
 
 def _num(value):
@@ -18,9 +18,12 @@ def _num(value):
     if value is None or value == "":
         return None
     try:
-        return float(value)
+        f = float(value)
     except (TypeError, ValueError):
         return None
+    if f != f:          # NaN (pandas uses NaN for empty cells)
+        return None
+    return f
 
 
 def health_score(place: dict, lens: str) -> float:
@@ -62,8 +65,8 @@ def total_score(place: dict, weights: dict, lens: str) -> int:
 
 def status(place: dict) -> str:
     """'open', 'nearly_full' or 'full'."""
-    capacity = int(place.get("capacity") or 0)
-    registered = int(place.get("registered") or 0)
+    capacity = int(_num(place.get("capacity")) or 0)
+    registered = int(_num(place.get("registered")) or 0)
 
     if capacity <= 0 or registered >= capacity:
         return "full"

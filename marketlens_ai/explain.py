@@ -26,9 +26,12 @@ def _num(value):
     if value is None or value == "":
         return None
     try:
-        return float(value)
+        f = float(value)
     except (TypeError, ValueError):
         return None
+    if f != f:          # NaN from pandas = missing
+        return None
+    return f
 
 
 def _level(value: float) -> str:

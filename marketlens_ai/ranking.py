@@ -13,7 +13,7 @@ Steps:
 7. equity check               (how many rural places are in the top 5)
 """
 
-from .scoring import health_score, total_score, status
+from .scoring import health_score, total_score, status, _num
 from .simulate import simulate
 from .explain import explain
 
@@ -25,13 +25,17 @@ def _is_rural(place: dict) -> bool:
     return place.get("area_type") == "rural"
 
 
+def _int(value) -> int:
+    return int(_num(value) or 0)
+
+
 def _build_item(place: dict, total: int, lens: str, sim: dict) -> dict:
     """One entry of 'ranked', in the exact contract shape."""
-    capacity = int(place.get("capacity") or 0)
-    registered = int(place.get("registered") or 0)
+    capacity = _int(place.get("capacity"))
+    registered = _int(place.get("registered"))
     confidence = {"pct": sim["pct"], "label": sim["label"]}
     return {
-        "rank": 0,  # filled in after sorting
+        "rank": 0,
         "id": place["id"],
         "name": place.get("name", ""),
         "area_type": place.get("area_type", ""),
@@ -39,9 +43,9 @@ def _build_item(place: dict, total: int, lens: str, sim: dict) -> dict:
         "segment": place.get("segment", ""),
         "channel": place.get("channel", ""),
         "scores": {
-            "demand": int(round(float(place.get("demand") or 0))),
+            "demand": int(round(_num(place.get("demand")) or 0)),
             "health": int(round(health_score(place, lens))),
-            "affordability": int(round(float(place.get("meat_cost") or 0))),
+            "affordability": int(round(_num(place.get("meat_cost")) or 0)),
             "total": total,
             "low": min(sim["low"], total),
             "high": max(sim["high"], total),
@@ -110,21 +114,17 @@ def rank(places: list[dict], weights: dict, lens: str,
                 "id": place["id"],
                 "name": place.get("name", ""),
                 "segment": place.get("segment", ""),
-                "registered": int(place.get("registered") or 0),
-                "capacity": int(place.get("capacity") or 0),
+                "registered": _int(place.get("registered")),
+                "capacity": _int(place.get("capacity")),
             })
         else:
             open_places.append(place)
 
-    # validates weights + lens and gives the exact total for each place
     totals = {p["id"]: total_score(p, weights, lens) for p in open_places}
-
     sims = simulate(open_places, weights, lens, n_sims=n_sims, seed=seed)
-
     items = [_build_item(p, totals[p["id"]], lens, sims[p["id"]])
              for p in open_places]
 
-    # highest total; tie -> higher confidence, then rural, then name
     items.sort(key=lambda it: (-it["scores"]["total"],
                                -it["confidence"]["pct"],
                                not it["is_rural"],
@@ -143,7 +143,7 @@ def rank(places: list[dict], weights: dict, lens: str,
         "meta": {
             "n_simulations": n_sims,
             "seed": seed,
-            "data_as_of": None,   # backend can fill this from its data
+            "data_as_of": None,
             "lens": lens,
         },
     }
