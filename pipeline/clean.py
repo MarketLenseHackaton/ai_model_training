@@ -14,7 +14,8 @@ Inputs (data/raw/):
   7. hotosm_*/points_of_interest.geojson                 OpenStreetMap shops & food outlets
 
 Output:
-  data/places.csv   one row per place, exactly the Project Spec fields
+  data/places.csv   one row per place, exactly the Project Spec fields (+ market_type)
+  data/states.csv   all 37 states with scores and their k-means market type
   data/sources.csv  every source used
 """
 
@@ -30,9 +31,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 from marketlens_ai.scoring import suggest_capacity  # noqa: E402
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from cluster import assign_market_types  # noqa: E402
+
 RAW = os.path.join(ROOT, "data", "raw")
 OUT_PLACES = os.path.join(ROOT, "data", "places.csv")
 OUT_SOURCES = os.path.join(ROOT, "data", "sources.csv")
+OUT_STATES = os.path.join(ROOT, "data", "states.csv")
 CONFIG = os.path.join(ROOT, "data", "places_config.csv")
 
 # --- state -> geopolitical zone (NBS reports prices by zone) ---
@@ -278,6 +283,16 @@ def build():
         has = s["crc_registry_index"].notna()
         s.loc[has, "crc_index"] = (s.loc[has, "crc_index"] + s.loc[has, "crc_registry_index"]) / 2
 
+    # --- k-means market types (unsupervised learning over all 37 states) ---
+    s["demand"] = s["trends_index"]
+    s, report = assign_market_types(s)
+    s[["state", "zone", "population", "demand", "protein_deficiency", "crc_index",
+       "meat_cost", "cluster", "market_type"]].round(1).to_csv(OUT_STATES, index=False)
+    say(f"k-means: k={report['k']}, silhouette={report['silhouette']} "
+        f"(tried {report['silhouette_by_k']})")
+    for name, members in report["groups"].items():
+        say(f"  {name}: {', '.join(members)}")
+
     state_lookup = s.set_index("state")
 
     # --- our places ---
@@ -331,6 +346,7 @@ def build():
             "meat_cost": round(float(row["meat_cost"])),
             "registered": int(c["registered"] or 0),
             "awareness_gap": awareness,
+            "market_type": row["market_type"],
             "label_demand": demand_label,
             "label_health": protein_label,
             "label_meat_cost": "estimated",
@@ -342,14 +358,14 @@ def build():
 
     cols = ["id", "name", "state", "area_type", "segment", "channel", "population",
             "demand", "protein_deficiency", "crc_index", "meat_cost", "capacity",
-            "registered", "awareness_gap", "label_demand", "label_health",
+            "registered", "awareness_gap", "market_type", "label_demand", "label_health",
             "label_meat_cost", "source_ids"]
     df = pd.DataFrame(out)[cols]
     df.to_csv(OUT_PLACES, index=False)
     write_sources()
     print(f"\nWrote {OUT_PLACES} ({len(df)} places)\n")
     print(df[["id", "population", "demand", "protein_deficiency", "crc_index",
-              "meat_cost", "capacity", "registered"]].to_string(index=False))
+              "meat_cost", "capacity", "registered", "market_type"]].to_string(index=False))
     return df
 
 
