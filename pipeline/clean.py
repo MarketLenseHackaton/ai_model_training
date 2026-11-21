@@ -10,11 +10,13 @@ Inputs (data/raw/):
   3. ndhs_stunting.csv              (optional)           NDHS 2024 stunting by state, typed by hand
   4. crc_cities.csv                 (optional)           colorectal cancer registry index by state
   5. data/places_config.csv                              our places + interview demand
-  6. soya beans.csv / awara.csv / beans.csv              Google Trends "interest by subregion"
+  6. soya beans.csv / awara.csv / beans.csv              Google Trends "interest by region"
   7. hotosm_*/points_of_interest.geojson                 OpenStreetMap shops & food outlets
+  8. data/products.csv                                   our products + the Trends term for each
 
 Output:
-  data/places.csv   one row per place, exactly the Project Spec fields (+ market_type)
+  data/places.csv   one row per place, the Project Spec fields + market_type
+                    + demand_<term> / label_demand_<term> for each Google Trends term
   data/states.csv   all 37 states with scores and their k-means market type
   data/sources.csv  every source used
 """
@@ -39,6 +41,7 @@ OUT_PLACES = os.path.join(ROOT, "data", "places.csv")
 OUT_SOURCES = os.path.join(ROOT, "data", "sources.csv")
 OUT_STATES = os.path.join(ROOT, "data", "states.csv")
 CONFIG = os.path.join(ROOT, "data", "places_config.csv")
+PRODUCTS = os.path.join(ROOT, "data", "products.csv")
 
 # --- state -> geopolitical zone (NBS reports prices by zone) ---
 ZONES = {
@@ -70,7 +73,14 @@ def norm_state(name) -> str:
         s = s[: -len(" STATE")]
     if s in ("FEDERAL CAPITAL TERRITORY", "ABUJA", "FCT ABUJA", "FCT"):
         return "FCT"
+    if s == "REPUBLIC OF NIGER":          # Google Trends mislabels Niger State this way
+        return "NIGER"
     return s
+
+
+def term_slug(term: str) -> str:
+    """'soya beans' -> 'soya_beans' (used in column names)."""
+    return "_".join(str(term).strip().lower().split())
 
 
 def norm_lga(name) -> str:
@@ -215,10 +225,32 @@ def load_trends() -> pd.DataFrame:
         frames.append(df[["state", "term", "value"]])
         say(f"Trends '{term}': {df['value'].notna().sum()} states")
     if not frames:
-        return pd.DataFrame(columns=["state", "trends_index"])
+        return pd.DataFrame(columns=["state", "trends_index"]), []
     allt = pd.concat(frames)
-    return allt.groupby("state", as_index=False)["value"].mean().rename(
-        columns={"value": "trends_index"})
+    allt["slug"] = allt["term"].map(term_slug)
+
+    # one column per term (trends_awara, trends_soya_beans, ...) + their average
+    wide = allt.pivot_table(index="state", columns="slug", values="value", aggfunc="mean")
+    slugs = sorted(wide.columns)
+    wide.columns = [f"trends_{c}" for c in wide.columns]
+    wide["trends_index"] = wide.mean(axis=1)
+    return wide.reset_index(), slugs
+
+
+# ---------------------------------------------------------------- 8. products
+def load_products(slugs) -> pd.DataFrame:
+    """data/products.csv: id, name, uses (; separated), trends_term."""
+    if not os.path.exists(PRODUCTS):
+        say("data/products.csv not found -> every product uses the average demand")
+        return pd.DataFrame(columns=["id", "name", "uses", "trends_term"])
+    df = pd.read_csv(PRODUCTS, dtype=str).fillna("")
+    for _, p in df.iterrows():
+        slug = term_slug(p["trends_term"]) if p["trends_term"].strip() else ""
+        if slug and slug in slugs:
+            say(f"Product '{p['id']}' -> demand from Trends '{p['trends_term']}'")
+        else:
+            say(f"Product '{p['id']}': no Trends file for '{p['trends_term']}' -> uses the average demand")
+    return df
 
 
 # ---------------------------------------------------------------- 7. OpenStreetMap
@@ -252,7 +284,8 @@ def build():
     meat = load_meat_prices()
     stunting = load_stunting()
     crc_reg = load_crc_registry()
-    trends = load_trends()
+    trends, slugs = load_trends()
+    load_products(slugs)
     osm_state, osm_lga = load_osm()
 
     s = states.merge(meat, on="state", how="left").merge(trends, on="state", how="left")
@@ -323,15 +356,22 @@ def build():
             crc = float((s["pm_density"] <= density).mean() * 100)   # same percentile scale
 
         # demand: Google Trends + interviews (whatever exists)
-        parts = []
-        if pd.notna(row.get("trends_index")):
-            parts.append(float(row["trends_index"]))
-        if c["demand_interviews"].strip():
-            parts.append(float(c["demand_interviews"]))
-        if parts:
-            demand, demand_label = float(np.mean(parts)), "estimated"
-        else:
-            demand, demand_label = 40.0, "assumed"      # no signal yet
+        def demand_from(trends_value):
+            parts = []
+            if pd.notna(trends_value):
+                parts.append(float(trends_value))
+            if c["demand_interviews"].strip():
+                parts.append(float(c["demand_interviews"]))
+            if parts:
+                return round(float(np.mean(parts))), "estimated"
+            return 40, "assumed"      # no signal yet
+
+        demand, demand_label = demand_from(row.get("trends_index"))
+        per_term = {}
+        for slug in slugs:
+            d, lab = demand_from(row.get(f"trends_{slug}"))
+            per_term[f"demand_{slug}"] = d
+            per_term[f"label_demand_{slug}"] = lab
 
         awareness = c["awareness_gap"].strip() or {
             "rural": "high", "city": "medium", "big_city": "low"}.get(c["area_type"], "medium")
@@ -351,6 +391,7 @@ def build():
             "label_health": protein_label,
             "label_meat_cost": "estimated",
             "source_ids": "S01;S02;S03;S06;S07" + (";S04" if stunting is not None else ""),
+            **per_term,
         }
         place["capacity"] = (int(c["capacity_override"]) if c["capacity_override"].strip()
                              else suggest_capacity(place))
@@ -360,12 +401,14 @@ def build():
             "demand", "protein_deficiency", "crc_index", "meat_cost", "capacity",
             "registered", "awareness_gap", "market_type", "label_demand", "label_health",
             "label_meat_cost", "source_ids"]
+    for slug in slugs:
+        cols += [f"demand_{slug}", f"label_demand_{slug}"]
     df = pd.DataFrame(out)[cols]
     df.to_csv(OUT_PLACES, index=False)
     write_sources()
     print(f"\nWrote {OUT_PLACES} ({len(df)} places)\n")
-    print(df[["id", "population", "demand", "protein_deficiency", "crc_index",
-              "meat_cost", "capacity", "registered", "market_type"]].to_string(index=False))
+    print(df[["id", "demand"] + [f"demand_{x}" for x in slugs] +
+             ["protein_deficiency", "crc_index", "meat_cost", "capacity", "registered"]].to_string(index=False))
     return df
 
 
@@ -377,8 +420,8 @@ def write_sources():
         ("S02", "Nigeria Subnational Population, Health and Poverty tables", "U.S. Census Bureau via HDX",
          "https://data.humdata.org/dataset/1caa305c-2d52-4361-a1bc-ce9b850859c6", 2019, "state / LGA",
          "population; under-5 mortality (MICS 2016-17); wealth quintiles (MICS 2016-17)"),
-        ("S03", "Google Trends, interest by subregion", "Google",
-         "https://trends.google.com", 2026, "state", "demand"),
+        ("S03", "Google Trends, interest by region (soya beans, awara), past 5 years", "Google",
+         "https://trends.google.com", 2026, "state", "demand, per product"),
         ("S04", "Nigeria Demographic and Health Survey 2024", "NPC, FMoHSW and ICF",
          "https://www.dhsprogram.com/pubs/pdf/FR395/FR395.pdf", 2025, "state",
          "protein_deficiency (stunting)"),
